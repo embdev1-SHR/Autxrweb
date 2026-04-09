@@ -46,8 +46,8 @@
 
                 // Settings
                 this.numBalls = 50;
-                this.shoutThreshold = 0.15; // Adjusted sensitivity
-                this.jumpForce = 8.0; // Lowered force for a slower "shoot up" effect
+                this.shoutThreshold = 0.12; // Slightly more sensitive for XR mics
+                this.jumpForce = 18.0;
             }
 
             async init() {
@@ -64,12 +64,11 @@
                 // Create Floor (Physics only)
                 const floorDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0);
                 const floorBody = this.physicsWorld.createRigidBody(floorDesc);
-                const floorColliderDesc = RAPIER.ColliderDesc.cuboid(20, 0.01, 20);
+                const floorColliderDesc = RAPIER.ColliderDesc.cuboid(20, 0.05, 20);
                 this.physicsWorld.createCollider(floorColliderDesc, floorBody);
 
-                // Create Balls sitting on the ground
-                const ballRadius = 0.08;
-                const ballGeo = new THREE.SphereGeometry(ballRadius, 16, 16);
+                // Create Balls with physics
+                const ballGeo = new THREE.SphereGeometry(0.08, 16, 16);
                 for (let i = 0; i < this.numBalls; i++) {
                     const color = new THREE.Color().setHSL(Math.random(), 0.8, 0.6);
                     const mat = new THREE.MeshStandardMaterial({
@@ -79,11 +78,11 @@
                     });
                     const mesh = new THREE.Mesh(ballGeo, mat);
 
-                    // Random start position around the user, sitting ON the floor
+                    // Random start position around the user
                     const angle = Math.random() * Math.PI * 2;
-                    const dist = 1.0 + Math.random() * 2.5;
+                    const dist = 1.5 + Math.random() * 2;
                     const x = Math.cos(angle) * dist;
-                    const y = ballRadius; // Start exactly at floor level
+                    const y = 0.1;
                     const z = Math.sin(angle) * dist;
 
                     mesh.position.set(x, y, z);
@@ -93,12 +92,9 @@
                     // Physics Body
                     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
                         .setTranslation(x, y, z)
-                        .setCanSleep(true) // Allow them to settle
-                        .setLinearDamping(0.5) // Add air resistance to slow down the fly speed
-                        .setAngularDamping(0.5);
-
+                        .setCanSleep(false);
                     const body = this.physicsWorld.createRigidBody(bodyDesc);
-                    const colliderDesc = RAPIER.ColliderDesc.ball(ballRadius).setRestitution(0.5);
+                    const colliderDesc = RAPIER.ColliderDesc.ball(0.08).setRestitution(0.8);
                     this.physicsWorld.createCollider(colliderDesc, body);
 
                     this.bodies.push(body);
@@ -108,6 +104,7 @@
             }
 
             createControlUI() {
+                // Use a SpatialPanel which is native to XR Blocks
                 this.panel = new xb.SpatialPanel({
                     width: 1.0,
                     height: 0.6,
@@ -126,7 +123,7 @@
                 });
 
                 this.statusText = grid.addRow({ weight: 0.2 }).addText({
-                    text: 'Ready to listen...',
+                    text: 'Enable Mic to begin',
                     fontSize: 0.04,
                     fontColor: '#ffffff'
                 });
@@ -144,7 +141,9 @@
 
             async initAudio() {
                 if (this.isListening) return;
+
                 try {
+                    // Specific audio constraints often preferred by Meta/Android XR
                     const constraints = {
                         audio: {
                             echoCancellation: false,
@@ -152,29 +151,36 @@
                             autoGainControl: false
                         }
                     };
+
                     const stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+                    // Resume AudioContext on user gesture (required by most browsers/XR shells)
                     this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
                     if (this.audioContext.state === 'suspended') {
                         await this.audioContext.resume();
                     }
+
                     const source = this.audioContext.createMediaStreamSource(stream);
                     this.analyser = this.audioContext.createAnalyser();
                     this.analyser.fftSize = 512;
                     source.connect(this.analyser);
+
                     this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
                     this.isListening = true;
+
                     this.micBtn.setText('LISTENING');
                     this.micBtn.setDisabled(true);
-                    this.statusText.setText('SHOUT TO JUMP!');
+                    this.statusText.setText('SHOUT NOW!');
                 } catch (err) {
-                    console.error('Mic error:', err);
-                    this.statusText.setText('Error: Check Mic Permissions');
+                    console.error('Microphone access denied:', err);
+                    this.statusText.setText('Error: Mic Access Denied');
                 }
             }
 
             getVolume() {
                 if (!this.isListening || !this.analyser) return 0;
                 this.analyser.getByteTimeDomainData(this.dataArray);
+
                 let sumSquares = 0.0;
                 for (let i = 0; i < this.dataArray.length; i++) {
                     const normalized = (this.dataArray[i] / 128.0) - 1.0;
@@ -184,8 +190,11 @@
             }
 
             update() {
+                // Step Physics world
                 if (this.physicsWorld) {
                     this.physicsWorld.step();
+
+                    // Synchronize Three.js visual positions with Physics simulation
                     for (let i = 0; i < this.balls.length; i++) {
                         const mesh = this.balls[i];
                         const body = this.bodies[i];
@@ -194,35 +203,45 @@
                         mesh.position.set(t.x, t.y, t.z);
                         mesh.quaternion.set(r.x, r.y, r.z, r.w);
 
-                        // Only reset if they fall through the floor completely (safety check)
-                        if (t.y < -1) {
-                            body.setTranslation({ x: (Math.random() - 0.5) * 4, y: 1, z: (Math.random() - 0.5) * 4 }, true);
+                        // Bounds check: Bring balls back if they wander too far
+                        if (t.y < -2 || Math.abs(t.x) > 10 || Math.abs(t.z) > 10) {
+                            body.setTranslation({
+                                x: (Math.random() - 0.5) * 4,
+                                y: 2,
+                                z: (Math.random() - 0.5) * 4
+                            }, true);
                             body.setLinvel({ x: 0, y: 0, z: 0 }, true);
                         }
                     }
                 }
 
+                // Audio reactive logic
                 if (this.isListening) {
                     const vol = this.getVolume();
+
+                    // Periodically update UI status
                     if (this.frameId % 15 === 0) {
                         const peak = (vol * 100).toFixed(0);
-                        this.statusText.setText(`Voice Level: ${peak}%`);
+                        this.statusText.setText(`Input: ${peak}%`);
                     }
 
                     if (vol > this.shoutThreshold) {
-                        // Apply physical impulses proportional to shout
+                        // Apply physical impulses based on shout intensity
                         const intensity = (vol / 0.5) * this.jumpForce;
+
                         this.bodies.forEach(body => {
                             const vel = body.linvel();
-                            // Only apply if the ball isn't already flying too fast upwards
-                            if (vel.y < 2) {
+                            // Only jump if balls are relatively settled or near floor
+                            if (vel.y < 3) {
                                 body.applyImpulse({
-                                    x: (Math.random() - 0.5) * 0.5,
-                                    y: intensity * (0.8 + Math.random() * 0.4),
-                                    z: (Math.random() - 0.5) * 0.5
+                                    x: (Math.random() - 0.5) * 5,
+                                    y: intensity * (0.5 + Math.random()),
+                                    z: (Math.random() - 0.5) * 5
                                 }, true);
                             }
                         });
+
+                        // Glow effect on the panel
                         this.panel.backgroundColor = '#00e5ff66';
                     } else {
                         this.panel.backgroundColor = '#000000cc';
@@ -234,9 +253,12 @@
         document.addEventListener('DOMContentLoaded', () => {
             const options = new xb.Options();
             options.enableUI();
-            options.enableHands();
+            options.enableHands(); // Enable hand tracking for Meta Quest/Galaxy XR
             options.enableReticles();
+
+            // Pass specific configurations for high-end XR
             options.setAppTitle('Voice Jump XR');
+
             xb.add(new VoiceJumpApp());
             xb.init(options);
         });
