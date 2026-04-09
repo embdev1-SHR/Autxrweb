@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>XR Seasons: High Fidelity Spatial Immersion</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <link type="text/css" rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
+
+    <script>
+      window.litDisableBundleWarning = true;
+    </script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+          "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
+          "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
+          "troika-worker-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-worker-utils/src/index.js",
+          "bidi-js": "https://esm.sh/bidi-js@%5E1.0.2?target=es2022",
+          "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
+          "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
+          "lit/": "https://esm.run/lit@3/",
+          "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.11.0/build/xrblocks.js",
+          "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.11.0/build/addons/"
+        }
+      }
+    </script>
+  </head>
+
+  <body>
+    <div id="startButton" style="
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: black;
+        color: white;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        cursor: pointer;
+        z-index: 1000;
+      ">
+      <p style="font-size: 24px">Click to Start Seasons Experience</p>
+    </div>
+
+    <script type="module">
+import * as THREE from 'three';
+import * as xb from 'xrblocks';
+import {VolumetricCloud} from 'xrblocks/addons/volumes/VolumetricCloud.js';
+import 'xrblocks/addons/simulator/SimulatorAddons.js';
+
+// --- USER PROVIDED EXACT CODE FOR RAIN PARTICLES START ---
+const kMaxAnimationFrames = 15;
+const kAnimationSpeed = 2.0;
+const DEBUG_SINGLE = false;
+// const DEBUG_SINGLE = true;
+
+function clamp(x, a, b) {
+  return Math.min(Math.max(x, a), b);
+}
+
+class RainParticles extends THREE.Object3D {
+  constructor() {
+    super();
+    // Sets the number of particles and defines the range of the raindrop
+    // effect.
+    this.particleCount = DEBUG_SINGLE ? 1 : 200;
+    this.RANGE = 4;
+    this.raycaster = new THREE.Raycaster();
+
+    // Initializes arrays for fall speeds, animation weights, and visibility
+    // states of each particle.
+    this.velocities = new Float32Array(this.particleCount);
+    this.particleWeights = new Float32Array(this.particleCount);
+    this.particleVisibility = new Float32Array(this.particleCount);
+
+    // Placeholder for the InstancedMesh representing the raindrop particles.
+    this.raindropMesh = null;
+  }
+
+  /**
+   * Initializes raindrop particles with a shader material and instanced
+   * geometry. Loads the texture and sets up the particle mesh and instanced
+   * attributes.
+   */
+  init() {
+    const textureLoader = new THREE.TextureLoader();
+    // Use fallback to asset URL if local texture is missing in generic environments
+    const texUrl = 'https://cdn.jsdelivr.net/gh/xrblocks/assets@main/demos/rain/textures/rain_sprite_sheet.png';
+    textureLoader.load(texUrl, (raindropTexture) => {
+      // Creates a custom shader material for the raindrop particles.
+      const raindropMaterial = this.createRaindropMaterial(raindropTexture);
+
+      // Creates a simple plane geometry for each raindrop particle.
+      const raindropGeometry = new THREE.PlaneGeometry(0.1, 0.1);
+
+      // Initializes an InstancedMesh with the defined geometry and material.
+      this.raindropMesh = new THREE.InstancedMesh(
+        raindropGeometry,
+        raindropMaterial,
+        this.particleCount
+      );
+
+      // Populates the particle mesh with initial positions and properties.
+      this.initializeParticles();
+
+      // Adds instanced attributes for weight and visibility to control raindrop
+      // animation and rendering.
+      this.raindropMesh.geometry.setAttribute(
+        'aWeight',
+        new THREE.InstancedBufferAttribute(this.particleWeights, 1).setUsage(
+          THREE.DynamicDrawUsage
+        )
+      );
+      this.raindropMesh.geometry.setAttribute(
+        'aVisibility',
+        new THREE.InstancedBufferAttribute(this.particleVisibility, 1).setUsage(
+          THREE.DynamicDrawUsage
+        )
+      );
+
+      // Flags the instance matrix for an initial update and adds the raindrop
+      // mesh to the scene.
+      this.raindropMesh.instanceMatrix.needsUpdate = true;
+      this.add(this.raindropMesh);
+    });
+  }
+
+  /**
+   * Creates and returns a custom shader material for the raindrop particles.
+   * Uses a texture and sets up uniforms for the camera position to handle
+   * billboard rotation.
+   */
+  createRaindropMaterial(texture) {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uTexture: {value: texture},
+        uCameraPosition: {value: new THREE.Vector3()},
+        uCameraRotationMatrix: {value: new THREE.Matrix4()},
+      },
+      vertexShader: `
+        attribute float aWeight;
+        attribute float aVisibility;
+        varying float vWeight;
+        varying float vVisibility;
+        varying vec2 vUv;
+        uniform vec3 uCameraPosition;
+        uniform mat4 uCameraRotationMatrix;
+
+        const float PI = 3.14159265359;
+
+        void main() {
+          vUv = uv;
+          vWeight = aWeight;
+          vVisibility = aVisibility;
+
+          // Get the world position of the instance
+          vec4 worldPosition = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+
+          vec3 rotatedPosition;
+
+          if (vWeight < 1.5) {
+            // Compute vector from particle to camera, projected onto XZ plane
+            vec3 toCamera = uCameraPosition - worldPosition.xyz;
+            toCamera.y = 0.0; // Ignore vertical component
+            toCamera = normalize(toCamera);
+
+            // Compute the angle to rotate around Y-axis
+            float angle = atan(toCamera.x, toCamera.z);
+
+            // Create rotation matrix around Y-axis
+            mat3 rotationMatrix = mat3(
+              cos(angle), 0.0, -sin(angle),
+              0.0,        1.0,  0.0,
+              sin(angle), 0.0,  cos(angle)
+            );
+
+            // Apply rotation to vertex position
+            rotatedPosition = rotationMatrix * position;
+          } else {
+            // Rotate the particle to face positive Y-axis
+            // This is a rotation of -90 degrees around X-axis
+            float angle = 0.5 * PI; // -90 degrees in radians
+
+            // Create rotation matrix around X-axis
+            mat3 rotationMatrix = mat3(
+              1.0,       0.0,        0.0,
+              0.0, cos(angle), -sin(angle),
+              0.0, sin(angle),  cos(angle)
+            );
+
+            // Apply rotation to vertex position
+            rotatedPosition = rotationMatrix * position;
+          }
+
+          // Apply instance transformations
+          vec4 finalPosition = instanceMatrix * vec4(rotatedPosition, 1.0);
+
+          // Transform to clip space
+          gl_Position = projectionMatrix * viewMatrix * finalPosition;
+        }
+
+      `,
+      fragmentShader: `
+        uniform sampler2D uTexture;
+        varying vec2 vUv;
+        varying float vWeight;
+        varying float vVisibility;
+
+        void main() {
+          const float kAnimationSpeed = 2.0;
+          vec2 uv = vUv * 0.25;  // Assumes a 4x4 texture grid.
+          float frame = floor(vWeight / kAnimationSpeed);
+          float xIndex = mod(frame, 4.0);
+          float yIndex = floor(frame / 4.0);
+          uv += vec2(xIndex, 3.0 - yIndex) * 0.25;  // Maps frame index to UV coordinates.
+          vec4 texColor = texture2D(uTexture, uv);
+          gl_FragColor = vec4(pow(texColor.rgb, vec3(0.5)), texColor.a * vVisibility * 0.8 - step(vWeight, 0.5) * 0.2);  // Applies visibility factor.
+        }
+      `,
+      transparent: true,
+    });
+  }
+
+  initializeParticles() {
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < this.particleCount; i++) {
+      dummy.position.set(
+        Math.random() * this.RANGE * 2 - this.RANGE,
+        Math.random() * this.RANGE * 2,
+        Math.random() * this.RANGE * 2 - this.RANGE
+      );
+      if (DEBUG_SINGLE) { dummy.position.set(0, 1.2, -1); }
+      dummy.updateMatrix();
+      this.raindropMesh.setMatrixAt(i, dummy.matrix);
+      this.velocities[i] = Math.random() * 0.05 + 0.2;
+      this.particleWeights[i] = 0;
+      this.particleVisibility[i] = 1;
+    }
+  }
+
+  update(camera, xrDepth) {
+    if (!this.raindropMesh) return;
+    const depthMesh = xrDepth.depthMesh;
+
+    const dummy = new THREE.Object3D();
+    const particleWeightsAttribute = this.raindropMesh.geometry.attributes.aWeight;
+    const particleVisibilityAttribute = this.raindropMesh.geometry.attributes.aVisibility;
+
+    const cameraEuler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+    const cameraEulerNoYaw = new THREE.Euler(cameraEuler.x, 0, cameraEuler.z, 'YXZ');
+    const cameraRotationMatrix = new THREE.Matrix4().makeRotationFromEuler(cameraEulerNoYaw);
+    const inverseCameraRotationMatrix = cameraRotationMatrix.clone().invert();
+
+    this.raindropMesh.material.uniforms.uCameraRotationMatrix.value.copy(inverseCameraRotationMatrix);
+
+    for (let i = 0; i < this.raindropMesh.count; ++i) {
+      this.raindropMesh.getMatrixAt(i, dummy.matrix);
+      dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
+
+      if (this.particleWeights[i] < 0.5) {
+        dummy.position.y -= this.velocities[i];
+      }
+
+      const screenPos = dummy.position.clone().project(camera);
+      const isWithinFoV =
+        screenPos.x >= -0.8 &&
+        screenPos.x <= 0.6 &&
+        screenPos.y >= -1.0 &&
+        screenPos.y <= 1.0 &&
+        screenPos.z >= 0 &&
+        screenPos.z <= 1;
+
+      let isOccluded = false;
+      let maxVisibility = 1.0;
+      let deltaDepth = 0.0;
+      const isHigh = dummy.position.y > 2.0;
+
+      if (isWithinFoV) {
+        const depth = xrDepth.getDepth((screenPos.x + 1) / 2, (screenPos.y + 1) / 2);
+        const pointInCameraSpace = dummy.position.clone().applyMatrix4(camera.matrixWorldInverse);
+        const distanceToCameraPlane = -pointInCameraSpace.z;
+
+        isOccluded = depth == 0 || depth < distanceToCameraPlane;
+        deltaDepth = Math.abs(distanceToCameraPlane - depth);
+
+        if (this.particleWeights[i] == 0 && this.particleVisibility[i] > 0.5 && isOccluded && !isHigh) {
+          this.particleWeights[i] = 1;
+          if (depth < 0.3) {
+            maxVisibility = 0.0;
+          } else if (depth > 2.0) {
+            maxVisibility *= 0.5 + (4.0 - depth) / 4.0;
+          }
+        }
+      }
+
+      if (isWithinFoV) {
+        this.particleVisibility[i] = isOccluded && !isHigh ? clamp(0.6 - deltaDepth, 0.0, 0.6) : maxVisibility;
+      } else {
+        this.particleVisibility[i] = 0.0;
+      }
+
+      if (dummy.position.y < 0) {
+        dummy.position.y = 0;
+        if (this.particleWeights[i] < 0.5) { this.particleWeights[i] = 1; }
+        this.particleVisibility[i] = isOccluded && !isHigh ? 0.0 : maxVisibility;
+      }
+
+      if (this.particleWeights[i] > 0) { this.particleWeights[i] += 1; }
+      // Removed minDepth check to fix missing rain particles
+      if (this.particleWeights[i] > kMaxAnimationFrames * kAnimationSpeed) {
+        this.respawnPrticle(dummy, i, camera, depthMesh);
+      }
+
+      particleVisibilityAttribute.setX(i, this.particleVisibility[i]);
+      particleWeightsAttribute.setX(i, this.particleWeights[i]);
+      dummy.updateMatrix();
+      this.raindropMesh.setMatrixAt(i, dummy.matrix);
+    }
+
+    this.raindropMesh.instanceMatrix.needsUpdate = true;
+    particleWeightsAttribute.needsUpdate = true;
+    particleVisibilityAttribute.needsUpdate = true;
+    this.raindropMesh.material.uniforms.uCameraPosition.value.copy(camera.position);
+  }
+
+  respawnPrticle(dummy, index, camera, depthMesh) {
+    let u = Math.random();
+    let v = Math.random();
+    const half = Math.random();
+    let vertex;
+    let inited = false;
+    let threshold = 0.1;
+
+    if (Math.random() < threshold) {
+      u = u * 0.8 + 0.1;
+      v = v * 0.8 + 0.1;
+      this.raycaster.setFromCamera({x: u * 2.0 - 1.0, y: v * 2.0 - 1.0}, camera);
+      const intersections = this.raycaster.intersectObject(depthMesh);
+      if (intersections.length > 0) {
+        vertex = intersections[0].point;
+        inited = true;
+      }
+    }
+
+    if (!inited) {
+      const theta = u * 2 * Math.PI;
+      let radius = Math.sqrt(v) * this.RANGE + 0.2;
+      if (half < 0.5) radius = Math.sqrt(v) * 0.7 + 0.3;
+      else if (half < 0.7) radius = Math.sqrt(v) * 1.5 + 0.3;
+      vertex = { x: radius * Math.cos(theta), z: radius * Math.sin(theta), y: 4.0 };
+    }
+    vertex = DEBUG_SINGLE ? new THREE.Vector3(-1, 4, -1) : vertex;
+    dummy.position.set(vertex.x, vertex.y, vertex.z);
+    dummy.rotation.set(0, 0, 0);
+    this.particleWeights[index] = inited ? 1.0 : 0.0;
+  }
+}
+// --- USER PROVIDED EXACT CODE FOR RAIN PARTICLES END ---
+
+
+/**
+ * Helper function to generate an anatomically accurate Leaf Geometry
+ */
+function createLeafGeometry() {
+  const shape = new THREE.Shape();
+  shape.moveTo(0, 0);
+  shape.bezierCurveTo(0.04, 0.02, 0.06, 0.08, 0, 0.15); // Right curve
+  shape.bezierCurveTo(-0.06, 0.08, -0.04, 0.02, 0, 0); // Left curve
+  return new THREE.ShapeGeometry(shape);
+}
+
+/**
+ * Generic Depth-Occluded Particle System (Adapted from RainParticles logic)
+ * Used for Snow and Fall Leaves to ensure they hide behind real-world furniture.
+ */
+class SpatialParticleSystem extends THREE.Object3D {
+  constructor(type = 'snow') {
+    super();
+    this.type = type;
+    this.particleCount = type === 'snow' ? 400 : 250;
+    this.RANGE = 5;
+    this.velocities = new Float32Array(this.particleCount);
+    this.rotations = [];
+    this.mesh = null;
+  }
+
+  init() {
+    let geom, mat;
+    if (this.type === 'snow') {
+      geom = new THREE.DodecahedronGeometry(0.015, 0);
+      mat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x444444 });
+    } else { // 'fall'
+      geom = createLeafGeometry();
+      mat = new THREE.MeshStandardMaterial({ 
+        side: THREE.DoubleSide, 
+        roughness: 0.8 
+      });
+    }
+
+    this.mesh = new THREE.InstancedMesh(geom, mat, this.particleCount);
+    const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
+
+    for (let i = 0; i < this.particleCount; i++) {
+      this.spawnParticle(dummy, i);
+      this.velocities[i] = Math.random() * 0.015 + 0.01;
+      this.rotations[i] = new THREE.Vector3(Math.random() * 0.05, Math.random() * 0.05, Math.random() * 0.05);
+
+      if (this.type === 'fall') {
+        // Autumn color palette (Oranges, Reds, Yellows)
+        const r = 0.7 + Math.random() * 0.3;
+        const g = 0.2 + Math.random() * 0.5;
+        const b = 0.1;
+        color.setRGB(r, g, b);
+        this.mesh.setColorAt(i, color);
+      }
+    }
+    this.add(this.mesh);
+  }
+
+  spawnParticle(dummy, i) {
+    dummy.position.set(
+      (Math.random() - 0.5) * this.RANGE * 2,
+      Math.random() * 5 + 2,
+      (Math.random() - 0.5) * this.RANGE * 2
+    );
+    dummy.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+    dummy.scale.setScalar(1);
+    dummy.updateMatrix();
+    this.mesh.setMatrixAt(i, dummy.matrix);
+  }
+
+  update(time, camera, depth) {
+    if (!this.mesh) return;
+    const dummy = new THREE.Object3D();
+
+    for (let i = 0; i < this.particleCount; i++) {
+      this.mesh.getMatrixAt(i, dummy.matrix);
+      dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
+
+      // Falling Physics
+      dummy.position.y -= this.velocities[i];
+      dummy.position.x += Math.sin(time * 0.5 + i) * 0.005;
+      
+      if (this.type === 'fall') {
+        dummy.rotation.x += this.rotations[i].x;
+        dummy.rotation.y += this.rotations[i].y;
+        dummy.rotation.z += this.rotations[i].z;
+      }
+
+      // Hand Interaction (Snow repelled by controllers/hands)
+      if (this.type === 'snow') {
+        const controllers = xb.core.input.controllers;
+        for (let c = 0; c < controllers.length; c++) {
+          const ctrl = controllers[c];
+          if (ctrl && ctrl.visible) {
+            const dist = dummy.position.distanceTo(ctrl.position);
+            if (dist < 0.3) {
+              // Push snow away from hand
+              const pushDir = dummy.position.clone().sub(ctrl.position).normalize();
+              dummy.position.add(pushDir.multiplyScalar(0.02));
+            }
+          }
+        }
+      }
+
+      // Exact Depth Occlusion Logic (adopted from RainParticles)
+      const screenPos = dummy.position.clone().project(camera);
+      const isWithinFoV =
+        screenPos.x >= -0.8 && screenPos.x <= 0.6 &&
+        screenPos.y >= -1.0 && screenPos.y <= 1.0 &&
+        screenPos.z >= 0 && screenPos.z <= 1;
+
+      if (isWithinFoV) {
+        const sampledDepth = depth.getDepth((screenPos.x + 1) / 2, (screenPos.y + 1) / 2);
+        const camSpacePos = dummy.position.clone().applyMatrix4(camera.matrixWorldInverse);
+        const distanceToCameraPlane = -camSpacePos.z;
+
+        // If particle falls behind real-world depth mesh, scale it to 0 (hide it)
+        if (sampledDepth > 0 && distanceToCameraPlane > sampledDepth + 0.05) {
+          dummy.scale.setScalar(0);
+        } else {
+          dummy.scale.setScalar(1);
+        }
+      }
+
+      if (dummy.position.y < -1) {
+        this.spawnParticle(dummy, i);
+      } else {
+        dummy.updateMatrix();
+        this.mesh.setMatrixAt(i, dummy.matrix);
+      }
+    }
+    this.mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
+/**
+ * Main application script managing Seasons, UI, and rendering logic.
+ */
+class SeasonsApp extends xb.Script {
+  constructor() {
+    super();
+    this.SEASONS = { SUMMER: 'summer', WINTER: 'winter', RAINY: 'rainy', FALL: 'fall', SPRING: 'spring' };
+    this.currentSeason = null;
+    
+    // Systems
+    this.weatherSystem = null;
+    this.rainSystem = null;
+    this.cloud = new VolumetricCloud();
+    this.springFlora = new THREE.Group();
+    this.butterflies = [];
+    
+    // Audio
+    this.listener = null;
+    this.rainSound = null;
+  }
+
+  async init() {
+    // Basic Lighting
+    this.ambientLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+    this.add(this.ambientLight);
+    this.sunLight = new THREE.DirectionalLight(0xffffff, 3);
+    this.sunLight.position.set(10, 15, 10);
+    this.sunLight.castShadow = true;
+    this.add(this.sunLight);
+
+    this.add(this.cloud);
+    this.add(this.springFlora);
+
+    this.createSun();
+    this.createFixedMenu();
+    this.setupDepthMeshMaterials();
+    this.setupAudio();
+
+    // Default Season
+    this.setSeason(this.SEASONS.SUMMER);
+  }
+
+  setupAudio() {
+    this.listener = new THREE.AudioListener();
+    xb.core.camera.add(this.listener);
+    this.rainSound = new THREE.Audio(this.listener);
+    const audioLoader = new THREE.AudioLoader();
+    audioLoader.load('https://cdn.jsdelivr.net/gh/xrblocks/assets@main/demos/rain/rain.opus', (buffer) => {
+      this.rainSound.setBuffer(buffer);
+      this.rainSound.setLoop(true);
+      this.rainSound.setVolume(0.5);
+    });
+
+    const startButton = document.getElementById('startButton');
+    if (startButton) {
+      startButton.addEventListener('click', () => {
+        if (this.listener.context.state === 'suspended') this.listener.context.resume();
+        startButton.remove();
+      });
+    }
+  }
+
+  setupDepthMeshMaterials() {
+    // Material to simulate a blanket of snow on the real-world ground/furniture
+    this.snowMaterial = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.9,
+      metalness: 0.0,
+      transparent: true,
+      opacity: 0.85
+    });
+
+    // Material to simulate a beach/sand effect for Summer
+    this.sandMaterial = new THREE.MeshStandardMaterial({
+      color: 0xf5deb3, // Sand color
+      roughness: 1.0,
+      metalness: 0.0,
+      transparent: true,
+      opacity: 0.85
+    });
+
+    // Invisible material for normal seasons
+    this.invisibleMaterial = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0,
+      depthWrite: false
+    });
+
+    xb.core.depth.depthMesh.material = this.invisibleMaterial;
+  }
+
+  createSun() {
+    this.sunGroup = new THREE.Group();
+    const core = new THREE.Mesh(new THREE.SphereGeometry(0.8, 32, 32), new THREE.MeshBasicMaterial({ color: 0xffea00 }));
+    const corona = new THREE.Mesh(new THREE.SphereGeometry(1.0, 32, 32), new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.3 }));
+    this.sunGroup.add(core, corona);
+    this.sunGroup.position.set(10, 20, -10);
+    this.sunGroup.visible = false;
+    this.add(this.sunGroup);
+  }
+
+  createFixedMenu() {
+    const panel = new xb.SpatialPanel({ 
+      width: 1.4, 
+      height: 0.9, 
+      backgroundColor: '#000000dd', 
+      useDefaultPosition: false 
+    });
+    // Fixed menu in center
+    panel.position.set(0, 1.5, -1.5);
+    
+    const grid = panel.addGrid();
+    grid.addRow({weight: 0.25}).addText({ text: "SEASONS", fontSize: 0.1, fontColor: '#ffffff' });
+    const btnRow = grid.addRow({weight: 0.75});
+    
+    const config = [
+      { id: this.SEASONS.SUMMER, icon: 'wb_sunny', color: '#f1c40f' },
+      { id: this.SEASONS.WINTER, icon: 'ac_unit', color: '#ecf0f1' },
+      { id: this.SEASONS.RAINY, icon: 'water_drop', color: '#3498db' },
+      { id: this.SEASONS.FALL, icon: 'eco', color: '#e67e22' },
+      { id: this.SEASONS.SPRING, icon: 'local_florist', color: '#ff80ab' }
+    ];
+
+    config.forEach(c => {
+      const col = btnRow.addCol({weight: 0.2});
+      const btn = col.addIconButton({ text: c.icon, fontSize: 0.5, backgroundColor: c.color });
+      btn.onTriggered = () => this.setSeason(c.id);
+    });
+    this.add(panel);
+  }
+
+  setSeason(id) {
+    if (this.currentSeason === id) return;
+    this.currentSeason = id;
+
+    // Cleanup active systems
+    if (this.weatherSystem) { this.remove(this.weatherSystem); this.weatherSystem = null; }
+    if (this.rainSystem) { this.remove(this.rainSystem); this.rainSystem = null; }
+    this.springFlora.clear();
+    this.butterflies = [];
+    this.sunGroup.visible = false;
+    
+    // Audio stop
+    if (this.rainSound && this.rainSound.isPlaying) this.rainSound.stop();
+
+    // Depth Mesh Cleanup
+    xb.core.depth.depthMesh.material = this.invisibleMaterial;
+
+    switch(id) {
+      case this.SEASONS.SUMMER:
+        this.sunGroup.visible = true;
+        this.sunLight.intensity = 5;
+        this.sunLight.color.set(0xfff4d6);
+        // Apply Sand to Floor via Depth Mesh
+        xb.core.depth.depthMesh.material = this.sandMaterial;
+        break;
+      case this.SEASONS.WINTER:
+        this.weatherSystem = new SpatialParticleSystem('snow');
+        this.weatherSystem.init();
+        this.add(this.weatherSystem);
+        // Apply Snow to Floor via Depth Mesh
+        xb.core.depth.depthMesh.material = this.snowMaterial;
+        this.sunLight.intensity = 2;
+        this.sunLight.color.set(0xe0f7fa);
+        break;
+      case this.SEASONS.RAINY:
+        this.rainSystem = new RainParticles();
+        this.rainSystem.init();
+        this.add(this.rainSystem);
+        this.sunLight.intensity = 0.5;
+        if (this.rainSound && this.listener.context.state === 'running') this.rainSound.play();
+        break;
+      case this.SEASONS.FALL:
+        this.weatherSystem = new SpatialParticleSystem('fall');
+        this.weatherSystem.init();
+        this.add(this.weatherSystem);
+        this.sunLight.intensity = 3;
+        this.sunLight.color.set(0xffcc88);
+        break;
+      case this.SEASONS.SPRING:
+        this.generateSpringFlora();
+        this.sunLight.intensity = 4;
+        this.sunLight.color.set(0xffffff);
+        break;
+    }
+  }
+
+  /**
+   * Procedural Generation of "Actual" Leaves, Flowers, and Bushes.
+   */
+  generateSpringFlora() {
+    const leafGeom = createLeafGeometry();
+    const bushMat = new THREE.MeshStandardMaterial({color: 0x2e7d32, side: THREE.DoubleSide});
+
+    // 1. Generate Dense Bushes
+    for (let i = 0; i < 15; i++) {
+      const bush = new THREE.Group();
+      // Inner dense volume
+      const volume = new THREE.Mesh(new THREE.DodecahedronGeometry(0.3, 1), new THREE.MeshStandardMaterial({color: 0x1b5e20}));
+      bush.add(volume);
+      
+      // Leaves scattered on the surface
+      const leaves = new THREE.InstancedMesh(leafGeom, bushMat, 60);
+      const dummy = new THREE.Object3D();
+      for (let l = 0; l < 60; l++) {
+        // Spherical distribution
+        const u = Math.random(); const v = Math.random();
+        const theta = 2 * Math.PI * u; const phi = Math.acos(2 * v - 1);
+        dummy.position.x = 0.3 * Math.sin(phi) * Math.cos(theta);
+        dummy.position.y = 0.3 * Math.sin(phi) * Math.sin(theta);
+        dummy.position.z = 0.3 * Math.cos(phi);
+        dummy.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, 0);
+        dummy.updateMatrix();
+        leaves.setMatrixAt(l, dummy.matrix);
+      }
+      bush.add(leaves);
+
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 2 + Math.random() * 4;
+      bush.position.set(Math.cos(angle)*dist, 0.2, Math.sin(angle)*dist);
+      this.springFlora.add(bush);
+    }
+
+    // 2. Generate Real Flowers
+    for (let i = 0; i < 40; i++) {
+      const flower = new THREE.Group();
+      // Stem
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.3), new THREE.MeshStandardMaterial({color: 0x4caf50}));
+      stem.position.y = 0.15;
+      // Center Pollen
+      const center = new THREE.Mesh(new THREE.SphereGeometry(0.02), new THREE.MeshStandardMaterial({color: 0xffeb3b}));
+      center.position.y = 0.3;
+      flower.add(stem, center);
+
+      // Petals (Using Leaf geometry rotated outward)
+      const petalCount = 5 + Math.floor(Math.random() * 4);
+      const petalColor = new THREE.Color().setHSL(Math.random(), 0.8, 0.6);
+      const petalMat = new THREE.MeshStandardMaterial({color: petalColor, side: THREE.DoubleSide});
+      for (let p = 0; p < petalCount; p++) {
+          const petal = new THREE.Mesh(leafGeom, petalMat);
+          petal.rotation.x = Math.PI / 2.2; // Bend outward
+          const pivot = new THREE.Group(); // Pivot to rotate around center
+          pivot.position.y = 0.3;
+          pivot.rotation.y = (p / petalCount) * Math.PI * 2;
+          pivot.add(petal);
+          flower.add(pivot);
+      }
+
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 1.5 + Math.random() * 3;
+      flower.position.set(Math.cos(angle)*dist, 0, Math.sin(angle)*dist);
+      this.springFlora.add(flower);
+    }
+
+    // 3. Generate Butterflies
+    for (let i = 0; i < 8; i++) {
+      const bf = new THREE.Group();
+      const wingGeom = new THREE.PlaneGeometry(0.04, 0.06);
+      const wingMat = new THREE.MeshBasicMaterial({color: 0xffffff, side: THREE.DoubleSide});
+      const lW = new THREE.Mesh(wingGeom, wingMat);
+      const rW = new THREE.Mesh(wingGeom, wingMat);
+      lW.position.x = -0.02; rW.position.x = 0.02;
+      bf.add(lW, rW);
+      bf.position.set((Math.random()-0.5)*4, 1.0 + Math.random(), (Math.random()-0.5)*4);
+      
+      this.butterflies.push({
+        obj: bf, lW, rW, 
+        seed: Math.random() * 10, 
+        vel: new THREE.Vector3((Math.random()-0.5)*0.01, 0, (Math.random()-0.5)*0.01)
+      });
+      this.springFlora.add(bf);
+    }
+  }
+
+  update() {
+    const time = performance.now() * 0.001;
+    const camera = xb.getXrCameraLeft() || xb.core.camera;
+
+    // Update Particle Systems
+    if (this.weatherSystem) this.weatherSystem.update(time, camera, xb.core.depth);
+    if (this.rainSystem) this.rainSystem.update(camera, xb.core.depth);
+
+    // Update Atmosphere
+    this.cloud.update(camera, xb.core.depth);
+
+    // Update Spring Animations
+    this.butterflies.forEach(b => {
+        const flap = Math.sin(time * 25 + b.seed) * 1.3;
+        b.lW.rotation.y = flap; 
+        b.rW.rotation.y = -flap;
+        b.obj.position.add(b.vel);
+        b.obj.position.y += Math.sin(time * 2 + b.seed) * 0.002;
+        // Keep within bounds
+        if (b.obj.position.length() > 6) b.obj.position.setLength(5.9);
+    });
+
+    // Update Summer Sun
+    if (this.sunGroup.visible) {
+        this.sunGroup.children[1].scale.setScalar(1 + Math.sin(time * 3) * 0.1);
+    }
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const options = new xb.Options();
+  options.enableUI();
+  // Critical for occlusion and snow-floor effect
+  options.enableDepth();
+  options.depth = new xb.DepthOptions(xb.xrDepthMeshPhysicsOptions);
+  
+  xb.add(new SeasonsApp());
+  xb.init(options);
+});
+    </script>
+  </body>
+</html>
