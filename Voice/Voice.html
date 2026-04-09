@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Voice Jump: Shout to Shoot! | XR Blocks</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <link type="text/css" rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
+    <script>window.litDisableBundleWarning = true;</script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+          "@dimforge/rapier3d-simd-compat": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-simd-compat@0.19.2/rapier.mjs",
+          "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
+          "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
+          "troika-worker-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-worker-utils/src/index.js",
+          "bidi-js": "https://esm.sh/bidi-js@%5E1.0.2?target=es2022",
+          "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
+          "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
+          "lit/": "https://esm.run/lit@3/",
+          "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.11.0/build/xrblocks.js",
+          "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.11.0/build/addons/"
+        }
+      }
+    </script>
+</head>
+
+<body>
+    <script type="module">
+        import * as THREE from 'three';
+        import * as xb from 'xrblocks';
+        import RAPIER from '@dimforge/rapier3d-simd-compat';
+
+        class VoiceJumpApp extends xb.Script {
+            constructor() {
+                super();
+                this.balls = [];
+                this.bodies = [];
+                this.audioContext = null;
+                this.analyser = null;
+                this.dataArray = null;
+                this.isListening = false;
+                this.physicsWorld = null;
+                this.floorBody = null;
+
+                // Settings
+                this.numBalls = 50;
+                this.shoutThreshold = 0.12; // Slightly more sensitive for XR mics
+                this.jumpForce = 18.0;
+            }
+
+            async init() {
+                // Setup Lights
+                this.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
+                const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+                dirLight.position.set(5, 10, 5);
+                this.add(dirLight);
+
+                // Setup Physics World
+                await RAPIER.init();
+                this.physicsWorld = new RAPIER.World({ x: 0.0, y: -9.81, z: 0.0 });
+
+                // Create Floor (Physics only)
+                const floorDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0);
+                const floorBody = this.physicsWorld.createRigidBody(floorDesc);
+                const floorColliderDesc = RAPIER.ColliderDesc.cuboid(20, 0.05, 20);
+                this.physicsWorld.createCollider(floorColliderDesc, floorBody);
+
+                // Create Balls with physics
+                const ballGeo = new THREE.SphereGeometry(0.08, 16, 16);
+                for (let i = 0; i < this.numBalls; i++) {
+                    const color = new THREE.Color().setHSL(Math.random(), 0.8, 0.6);
+                    const mat = new THREE.MeshStandardMaterial({
+                        color: color,
+                        roughness: 0.2,
+                        metalness: 0.1
+                    });
+                    const mesh = new THREE.Mesh(ballGeo, mat);
+
+                    // Random start position around the user
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 1.5 + Math.random() * 2;
+                    const x = Math.cos(angle) * dist;
+                    const y = 0.1;
+                    const z = Math.sin(angle) * dist;
+
+                    mesh.position.set(x, y, z);
+                    this.add(mesh);
+                    this.balls.push(mesh);
+
+                    // Physics Body
+                    const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+                        .setTranslation(x, y, z)
+                        .setCanSleep(false);
+                    const body = this.physicsWorld.createRigidBody(bodyDesc);
+                    const colliderDesc = RAPIER.ColliderDesc.ball(0.08).setRestitution(0.8);
+                    this.physicsWorld.createCollider(colliderDesc, body);
+
+                    this.bodies.push(body);
+                }
+
+                this.createControlUI();
+            }
+
+            createControlUI() {
+                // Use a SpatialPanel which is native to XR Blocks
+                this.panel = new xb.SpatialPanel({
+                    width: 1.0,
+                    height: 0.6,
+                    backgroundColor: '#000000cc',
+                    useDefaultPosition: false
+                });
+
+                this.panel.position.set(0, 1.5, -1.0);
+                this.add(this.panel);
+
+                const grid = this.panel.addGrid();
+                grid.addRow({ weight: 0.3 }).addText({
+                    text: 'VOICE JUMPER',
+                    fontSize: 0.08,
+                    fontColor: '#00e5ff'
+                });
+
+                this.statusText = grid.addRow({ weight: 0.2 }).addText({
+                    text: 'Enable Mic to begin',
+                    fontSize: 0.04,
+                    fontColor: '#ffffff'
+                });
+
+                const btnRow = grid.addRow({ weight: 0.5 });
+                this.micBtn = btnRow.addCol({ weight: 0.8 }).addTextButton({
+                    text: '🎤 START MIC',
+                    backgroundColor: '#0077ff',
+                    fontColor: '#ffffff',
+                    fontSize: 0.15
+                });
+
+                this.micBtn.onTriggered = () => this.initAudio();
+            }
+
+            async initAudio() {
+                if (this.isListening) return;
+
+                try {
+                    // Specific audio constraints often preferred by Meta/Android XR
+                    const constraints = {
+                        audio: {
+                            echoCancellation: false,
+                            noiseSuppression: false,
+                            autoGainControl: false
+                        }
+                    };
+
+                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+                    // Resume AudioContext on user gesture (required by most browsers/XR shells)
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    if (this.audioContext.state === 'suspended') {
+                        await this.audioContext.resume();
+                    }
+
+                    const source = this.audioContext.createMediaStreamSource(stream);
+                    this.analyser = this.audioContext.createAnalyser();
+                    this.analyser.fftSize = 512;
+                    source.connect(this.analyser);
+
+                    this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+                    this.isListening = true;
+
+                    this.micBtn.setText('LISTENING');
+                    this.micBtn.setDisabled(true);
+                    this.statusText.setText('SHOUT NOW!');
+                } catch (err) {
+                    console.error('Microphone access denied:', err);
+                    this.statusText.setText('Error: Mic Access Denied');
+                }
+            }
+
+            getVolume() {
+                if (!this.isListening || !this.analyser) return 0;
+                this.analyser.getByteTimeDomainData(this.dataArray);
+
+                let sumSquares = 0.0;
+                for (let i = 0; i < this.dataArray.length; i++) {
+                    const normalized = (this.dataArray[i] / 128.0) - 1.0;
+                    sumSquares += normalized * normalized;
+                }
+                return Math.sqrt(sumSquares / this.dataArray.length);
+            }
+
+            update() {
+                // Step Physics world
+                if (this.physicsWorld) {
+                    this.physicsWorld.step();
+
+                    // Synchronize Three.js visual positions with Physics simulation
+                    for (let i = 0; i < this.balls.length; i++) {
+                        const mesh = this.balls[i];
+                        const body = this.bodies[i];
+                        const t = body.translation();
+                        const r = body.rotation();
+                        mesh.position.set(t.x, t.y, t.z);
+                        mesh.quaternion.set(r.x, r.y, r.z, r.w);
+
+                        // Bounds check: Bring balls back if they wander too far
+                        if (t.y < -2 || Math.abs(t.x) > 10 || Math.abs(t.z) > 10) {
+                            body.setTranslation({
+                                x: (Math.random() - 0.5) * 4,
+                                y: 2,
+                                z: (Math.random() - 0.5) * 4
+                            }, true);
+                            body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+                        }
+                    }
+                }
+
+                // Audio reactive logic
+                if (this.isListening) {
+                    const vol = this.getVolume();
+
+                    // Periodically update UI status
+                    if (this.frameId % 15 === 0) {
+                        const peak = (vol * 100).toFixed(0);
+                        this.statusText.setText(`Input: ${peak}%`);
+                    }
+
+                    if (vol > this.shoutThreshold) {
+                        // Apply physical impulses based on shout intensity
+                        const intensity = (vol / 0.5) * this.jumpForce;
+
+                        this.bodies.forEach(body => {
+                            const vel = body.linvel();
+                            // Only jump if balls are relatively settled or near floor
+                            if (vel.y < 3) {
+                                body.applyImpulse({
+                                    x: (Math.random() - 0.5) * 5,
+                                    y: intensity * (0.5 + Math.random()),
+                                    z: (Math.random() - 0.5) * 5
+                                }, true);
+                            }
+                        });
+
+                        // Glow effect on the panel
+                        this.panel.backgroundColor = '#00e5ff66';
+                    } else {
+                        this.panel.backgroundColor = '#000000cc';
+                    }
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const options = new xb.Options();
+            options.enableUI();
+            options.enableHands(); // Enable hand tracking for Meta Quest/Galaxy XR
+            options.enableReticles();
+
+            // Pass specific configurations for high-end XR
+            options.setAppTitle('Voice Jump XR');
+
+            xb.add(new VoiceJumpApp());
+            xb.init(options);
+        });
+    </script>
+</body>
+
+</html>

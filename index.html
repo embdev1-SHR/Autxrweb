@@ -1,259 +1,134 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Autxrweb Experiences</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <head>
+    <title>Autxrweb Portal</title>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    />
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <style>
-        :root {
-            --bg-color-1: #0b0d17;
-            --bg-color-2: #1c1a2e;
-            --card-bg: rgba(255, 255, 255, 0.05);
-            --card-hover: rgba(255, 255, 255, 0.1);
-            --card-border: rgba(255, 255, 255, 0.1);
-            --accent: #5e6ad2;
-            --accent-hover: #7b8af5;
-            --text-main: #f0f0f5;
-            --text-sub: #a0a0b0;
-        }
-
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: 'Outfit', sans-serif;
-            background: radial-gradient(circle at top right, var(--bg-color-2), var(--bg-color-1));
-            color: var(--text-main);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            overflow-x: hidden;
-        }
-
-        /* Animated background elements */
-        .bg-orb {
-            position: absolute;
-            border-radius: 50%;
-            filter: blur(100px);
-            z-index: -1;
-            opacity: 0.5;
-            animation: float 20s infinite ease-in-out alternate;
-        }
-        .orb-1 { width: 400px; height: 400px; background: #3f51b5; top: -100px; left: -100px; }
-        .orb-2 { width: 300px; height: 300px; background: #9c27b0; bottom: 10%; right: -50px; animation-delay: -5s; }
-
-        @keyframes float {
-            0% { transform: translate(0, 0) scale(1); }
-            50% { transform: translate(50px, 30px) scale(1.1); }
-            100% { transform: translate(-30px, 50px) scale(0.9); }
-        }
-
-        header {
-            text-align: center;
-            padding: 4rem 2rem 2rem;
-            max-width: 800px;
-        }
-
-        h1 {
-            font-size: 3.5rem;
-            font-weight: 700;
-            margin: 0;
-            background: linear-gradient(135deg, #fff, #aab4ff);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            letter-spacing: -1px;
-        }
-
-        p.subtitle {
-            font-size: 1.25rem;
-            color: var(--text-sub);
-            margin-top: 1rem;
-            font-weight: 300;
-        }
-
-        .grid-container {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 2rem;
-            width: 100%;
-            max-width: 1200px;
-            padding: 2rem;
-            box-sizing: border-box;
-            z-index: 1;
-        }
-
-        .experience-card {
-            background: var(--card-bg);
-            border: 1px solid var(--card-border);
-            border-radius: 20px;
-            padding: 2rem;
-            text-decoration: none;
-            color: inherit;
-            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            display: flex;
-            flex-direction: column;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .experience-card::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0; height: 100%;
-            background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 100%);
-            opacity: 0;
-            transition: opacity 0.3s ease;
-            pointer-events: none;
-        }
-
-        .experience-card:hover {
-            transform: translateY(-10px) scale(1.02);
-            background: var(--card-hover);
-            border-color: rgba(255, 255, 255, 0.2);
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
-        }
-
-        .experience-card:hover::before {
-            opacity: 1;
-        }
-
-        .card-icon {
-            font-size: 2.5rem;
-            margin-bottom: 1.5rem;
-            background: var(--card-bg);
-            width: 70px;
-            height: 70px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 16px;
-            transition: transform 0.3s ease;
-        }
-
-        .experience-card:hover .card-icon {
-            transform: scale(1.1) rotate(5deg);
-        }
-
-        .card-title {
-            font-size: 1.5rem;
-            font-weight: 600;
-            margin: 0 0 0.5rem 0;
-        }
-
-        .card-desc {
-            color: var(--text-sub);
-            font-size: 1rem;
-            margin: 0;
-            line-height: 1.5;
-            flex-grow: 1;
-        }
-        
-        .card-footer {
-            margin-top: 1.5rem;
-            font-size: 0.9rem;
-            color: var(--accent);
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            opacity: 0.8;
-            transition: opacity 0.3s ease;
-        }
-        
-        .experience-card:hover .card-footer {
-            opacity: 1;
-        }
-        
-        .card-footer::after {
-            content: '→';
-            transition: transform 0.3s ease;
-        }
-        
-        .experience-card:hover .card-footer::after {
-            transform: translateX(5px);
-        }
-
-        /* Specific Icon Colors */
-        .ic-seasons { color: #f1c40f; }
-        .ic-voice { color: #3498db; }
-        .ic-balloon { color: #e74c3c; }
-        .ic-ballpit { color: #9b59b6; }
-        .ic-paint { color: #2ecc71; }
-        .ic-rain { color: #82ccdd; }
-        .ic-splash { color: #ff9f43; }
-
-        @media (max-width: 768px) {
-            h1 { font-size: 2.5rem; }
-            .grid-container { padding: 1rem; }
-        }
+      body {
+        margin: 0;
+        background-color: #1a1a2e;
+        overflow: hidden;
+        color: white;
+        font-family: sans-serif;
+      }
+      /* Fallback 2D UI for users not in XR */
+      #fallback-ui {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 2rem;
+        border-radius: 12px;
+        z-index: 10;
+        pointer-events: none; /* Let clicks pass through if needed, though they shouldn't */
+      }
+      #fallback-ui h1 { margin-top: 0; }
+      #fallback-ui p { color: #aaa; }
     </style>
-</head>
-<body>
-    <div class="bg-orb orb-1"></div>
-    <div class="bg-orb orb-2"></div>
+    <script>
+      window.litDisableBundleWarning = true;
+    </script>
+    <script type="importmap">
+      {
+        "imports": {
+          "@dimforge/rapier3d-simd-compat": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-simd-compat@0.19.2/rapier.mjs",
+          "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+          "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
+          "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
+          "troika-worker-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-worker-utils/src/index.js",
+          "bidi-js": "https://esm.sh/bidi-js@%5E1.0.2?target=es2022",
+          "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
+          "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
+          "lit/": "https://esm.run/lit@3/",
+          "xrblocks": "../build/xrblocks.js",
+          "xrblocks/addons/": "../build/addons/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="fallback-ui">
+      <h1>Autxrweb XR Portal</h1>
+      <p>Enter VR / AR to view the spatial menu.</p>
+    </div>
 
-    <header>
-        <h1>Autxrweb Portal</h1>
-        <p class="subtitle">Explore a collection of immersive web experiences.</p>
-    </header>
+    <script type="module">
+      import * as THREE from 'three';
+      import * as xb from 'xrblocks';
 
-    <main class="grid-container">
+      class MenuApp extends xb.App {
+        constructor() {
+          super();
+        }
+
+        start() {
+          this.createFixedMenu();
+          // Hiding fallback UI once started
+          const fallback = document.getElementById('fallback-ui');
+          if(fallback) fallback.style.display = 'none';
+        }
+
+        createFixedMenu() {
+          const panel = new xb.SpatialPanel({ 
+            width: 1.6, 
+            height: 1.0, 
+            backgroundColor: '#1a1a2edd', 
+            useDefaultPosition: false 
+          });
+          // Fixed menu in center, comfortable viewing distance
+          panel.position.set(0, 1.5, -2.0);
+          
+          const grid = panel.addGrid();
+          grid.addRow({weight: 0.2}).addText({ text: "EXPERIENCES", fontSize: 0.12, fontColor: '#ffffff' });
+
+          const row1 = grid.addRow({weight: 0.4});
+          const row2 = grid.addRow({weight: 0.4});
+
+          // Row 1
+          const seasonsCol = row1.addCol({weight: 0.25});
+          seasonsCol.addIconButton({ text: 'wb_sunny', fontSize: 0.3, backgroundColor: '#f1ca0f' }).onTriggered = () => { window.location.href = 'Seasons/Seasons.html'; };
+          
+          const voiceCol = row1.addCol({weight: 0.25});
+          voiceCol.addIconButton({ text: 'mic', fontSize: 0.3, backgroundColor: '#3498db' }).onTriggered = () => { window.location.href = 'Voice/Voice.html'; };
+
+          const balloonCol = row1.addCol({weight: 0.25});
+          balloonCol.addIconButton({ text: 'bubble_chart', fontSize: 0.3, backgroundColor: '#e74c3c' }).onTriggered = () => { window.location.href = 'balloonpop/index.html'; };
+
+          const ballpitCol = row1.addCol({weight: 0.25});
+          ballpitCol.addIconButton({ text: 'sports_baseball', fontSize: 0.3, backgroundColor: '#9b59b6' }).onTriggered = () => { window.location.href = 'ballpit/index.html'; };
+
+          // Row 2
+          const paintCol = row2.addCol({weight: 0.33});
+          paintCol.addIconButton({ text: 'format_paint', fontSize: 0.3, backgroundColor: '#2ecc71' }).onTriggered = () => { window.location.href = 'paint/index.html'; };
+
+          const rainCol = row2.addCol({weight: 0.33});
+          rainCol.addIconButton({ text: 'water_drop', fontSize: 0.3, backgroundColor: '#82ccdd' }).onTriggered = () => { window.location.href = 'rain/index.html'; };
+
+          const splashCol = row2.addCol({weight: 0.33});
+          splashCol.addIconButton({ text: 'brush', fontSize: 0.3, backgroundColor: '#ff9f43' }).onTriggered = () => { window.location.href = 'splash/index.html'; };
+
+          this.add(panel);
+        }
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        let options = new xb.Options();
+        options.enableUI();
         
-        <a href="Seasons/Seasons.html" class="experience-card">
-            <div class="card-icon"><span class="ic-seasons">🌸</span></div>
-            <h2 class="card-title">Seasons</h2>
-            <p class="card-desc">Experience dynamic seasonal weather systems and procedural flora and environments.</p>
-            <div class="card-footer">Launch Experience</div>
-        </a>
+        // Remove cube logic: We specifically are omitting any add(new THREE.Mesh(... BoxGeometry ...)) 
+        // that used to exist here. The MenuApp only adds the SpatialPanel.
 
-        <a href="Voice/Voice.html" class="experience-card">
-            <div class="card-icon"><span class="ic-voice">🎙️</span></div>
-            <h2 class="card-title">Voice</h2>
-            <p class="card-desc">Interactive voice-driven experience demonstrating audio interaction capabilities.</p>
-            <div class="card-footer">Launch Experience</div>
-        </a>
-
-        <a href="balloonpop/index.html" class="experience-card">
-            <div class="card-icon"><span class="ic-balloon">🎈</span></div>
-            <h2 class="card-title">Balloon Pop</h2>
-            <p class="card-desc">A fun interactive experience to pop balloons using spatial interaction and audio.</p>
-            <div class="card-footer">Launch Experience</div>
-        </a>
-
-        <a href="ballpit/index.html" class="experience-card">
-            <div class="card-icon"><span class="ic-ballpit">🎳</span></div>
-            <h2 class="card-title">Ball Pit</h2>
-            <p class="card-desc">Physics-based ball pit experience with ball shooters and interactions.</p>
-            <div class="card-footer">Launch Experience</div>
-        </a>
-
-        <a href="paint/index.html" class="experience-card">
-            <div class="card-icon"><span class="ic-paint">🎨</span></div>
-            <h2 class="card-title">Paint Menu</h2>
-            <p class="card-desc">A spatial painting utility allowing you to select and interact with the environment.</p>
-            <div class="card-footer">Launch Experience</div>
-        </a>
-
-        <a href="rain/index.html" class="experience-card">
-            <div class="card-icon"><span class="ic-rain">🌧️</span></div>
-            <h2 class="card-title">Rain Particles</h2>
-            <p class="card-desc">Immersive particle system simulating realistic rain across depth meshes.</p>
-            <div class="card-footer">Launch Experience</div>
-        </a>
-
-        <a href="splash/index.html" class="experience-card">
-            <div class="card-icon"><span class="ic-splash">🖌️</span></div>
-            <h2 class="card-title">Paint Splash</h2>
-            <p class="card-desc">Interactive paint splatter experiment over spatial environments.</p>
-            <div class="card-footer">Launch Experience</div>
-        </a>
-
-    </main>
-
-</body>
+        xb.add(new MenuApp());
+        xb.init(options);
+      });
+    </script>
+  </body>
 </html>
