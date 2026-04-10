@@ -268,11 +268,10 @@
                         // Glow effect on the panel
                         this.panel.backgroundColor = '#00e5ff66';
                     } else {
-                        // Hard stop upward motion + active downward pull so balls fall immediately
+                        // Clamp upward velocity to zero — gravity (-9.81) handles the fall
                         this.bodies.forEach(body => {
                             const v = body.linvel();
                             body.setLinvel({ x: v.x, y: Math.min(v.y, 0), z: v.z }, true);
-                            body.addForce({ x: 0, y: -0.3, z: 0 }, true);
                         });
                         this.panel.backgroundColor = '#000000cc';
                     }
