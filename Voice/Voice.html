@@ -46,7 +46,7 @@
 
                 // Settings
                 this.numBalls = 50;
-                this.shoutThreshold = 0.02; // Detect normal speech, not just shouts
+                this.shoutThreshold = 0.07; // Clear gap above ambient mic noise
                 this.liftForce = 0.015;     // Very small continuous upward force per frame
             }
 
@@ -268,10 +268,11 @@
                         // Glow effect on the panel
                         this.panel.backgroundColor = '#00e5ff66';
                     } else {
-                        // Clamp y velocity to ≤ 0 every frame — no coasting upward when silent
+                        // Hard stop upward motion + active downward pull so balls fall immediately
                         this.bodies.forEach(body => {
                             const v = body.linvel();
                             body.setLinvel({ x: v.x, y: Math.min(v.y, 0), z: v.z }, true);
+                            body.addForce({ x: 0, y: -0.3, z: 0 }, true);
                         });
                         this.panel.backgroundColor = '#000000cc';
                     }
