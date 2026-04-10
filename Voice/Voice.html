@@ -44,7 +44,7 @@
           // Settings
           this.numBalls = 40;
           this.shoutThreshold = 0.15; 
-          this.jumpForce = 0.08; // Per-frame force — small so rise is gradual
+          this.jumpForce = 0.5; // Impulse strength
         }
 
         async init() {
@@ -203,11 +203,16 @@
             }
 
             if (vol > this.shoutThreshold) {
-              // addForce accumulates each frame — gradual rise, not an instant spike
+              // Apply upward impulse only while shouting
               const force = (vol - this.shoutThreshold) * this.jumpForce;
               this.bodies.forEach(body => {
+                // Wake up body and apply impulse
                 body.wakeUp();
-                body.addForce({ x: 0, y: force, z: 0 }, true);
+                body.applyImpulse({ 
+                  x: (Math.random() - 0.5) * 0.01, 
+                  y: force * (0.5 + Math.random()), 
+                  z: (Math.random() - 0.5) * 0.01 
+                }, true);
               });
               this.panel.backgroundColor = '#00e5ff66';
             } else {
