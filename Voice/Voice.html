@@ -127,7 +127,7 @@
                     // Physics Body
                     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
                         .setTranslation(x, y, z)
-                        .setLinearDamping(0.5)  // light air resistance only — gravity still dominates
+                        .setLinearDamping(0.0)  // no damping — gravity acts freely
                         .setCanSleep(false);
                     const body = this.physicsWorld.createRigidBody(bodyDesc);
                     const colliderDesc = RAPIER.ColliderDesc.ball(0.08)
@@ -268,11 +268,6 @@
                         // Glow effect on the panel
                         this.panel.backgroundColor = '#00e5ff66';
                     } else {
-                        // Clamp upward velocity to zero — gravity (-9.81) handles the fall
-                        this.bodies.forEach(body => {
-                            const v = body.linvel();
-                            body.setLinvel({ x: v.x, y: Math.min(v.y, 0), z: v.z }, true);
-                        });
                         this.panel.backgroundColor = '#000000cc';
                     }
                 }
