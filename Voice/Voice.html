@@ -47,7 +47,7 @@
                 // Settings
                 this.numBalls = 50;
                 this.shoutThreshold = 0.02; // Detect normal speech, not just shouts
-                this.liftForce = 0.04;      // Very small continuous upward force per frame
+                this.liftForce = 0.015;     // Very small continuous upward force per frame
             }
 
             async init() {
@@ -268,10 +268,10 @@
                         // Glow effect on the panel
                         this.panel.backgroundColor = '#00e5ff66';
                     } else {
-                        // Kill upward momentum the moment voice stops — gravity takes over
+                        // Clamp y velocity to ≤ 0 every frame — no coasting upward when silent
                         this.bodies.forEach(body => {
                             const v = body.linvel();
-                            if (v.y > 0) body.setLinvel({ x: v.x, y: 0, z: v.z }, true);
+                            body.setLinvel({ x: v.x, y: Math.min(v.y, 0), z: v.z }, true);
                         });
                         this.panel.backgroundColor = '#000000cc';
                     }
