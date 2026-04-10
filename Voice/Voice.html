@@ -1,7 +1,6 @@
 <!doctype html>
 <html lang="en">
-
-<head>
+  <head>
     <title>Voice Jump: Shout to Shoot! | XR Blocks</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <link type="text/css" rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
@@ -24,269 +23,214 @@
         }
       }
     </script>
-</head>
-
-<body>
+  </head>
+  <body>
     <script type="module">
-        import * as THREE from 'three';
-        import * as xb from 'xrblocks';
-        import RAPIER from '@dimforge/rapier3d-simd-compat';
+      import * as THREE from 'three';
+      import * as xb from 'xrblocks';
+      import RAPIER from '@dimforge/rapier3d-simd-compat';
 
-        class VoiceJumpApp extends xb.Script {
-            constructor() {
-                super();
-                this.balls = [];
-                this.bodies = [];
-                this.audioContext = null;
-                this.analyser = null;
-                this.dataArray = null;
-                this.isListening = false;
-                this.physicsWorld = null;
-                this.floorBody = null;
-
-                // Settings
-                this.numBalls = 50;
-                this.shoutThreshold = 0.07; // Clear gap above ambient mic noise
-                this.liftForce = 0.015;     // Very small continuous upward force per frame
-            }
-
-            async init() {
-                // Setup Lights
-                this.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
-                const dirLight = new THREE.DirectionalLight(0xffffff, 2);
-                dirLight.position.set(5, 10, 5);
-                this.add(dirLight);
-
-                // Setup Physics World
-                await RAPIER.init();
-                this.physicsWorld = new RAPIER.World({ x: 0.0, y: -9.81, z: 0.0 });
-
-                // Pit dimensions
-                const pitHalfW = 1.2; // half-width (x)
-                const pitHalfD = 1.2; // half-depth (z)
-                const wallH    = 0.6; // wall half-height
-                const wallT    = 0.05; // wall half-thickness
-
-                // Floor
-                const floorDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0);
-                const floorBody = this.physicsWorld.createRigidBody(floorDesc);
-                this.physicsWorld.createCollider(
-                    RAPIER.ColliderDesc.cuboid(pitHalfW + wallT, 0.05, pitHalfD + wallT), floorBody
-                );
-
-                // Four walls (fixed bodies, invisible — just physics containment)
-                const wallDefs = [
-                    { pos: [0,              wallH, -(pitHalfD + wallT)], half: [pitHalfW + wallT, wallH, wallT] },
-                    { pos: [0,              wallH,   pitHalfD + wallT],  half: [pitHalfW + wallT, wallH, wallT] },
-                    { pos: [-(pitHalfW + wallT), wallH, 0],              half: [wallT, wallH, pitHalfD + wallT] },
-                    { pos: [  pitHalfW + wallT,  wallH, 0],              half: [wallT, wallH, pitHalfD + wallT] },
-                ];
-                wallDefs.forEach(({ pos, half }) => {
-                    const wb = this.physicsWorld.createRigidBody(
-                        RAPIER.RigidBodyDesc.fixed().setTranslation(...pos)
-                    );
-                    this.physicsWorld.createCollider(RAPIER.ColliderDesc.cuboid(...half), wb);
-                });
-
-                // Visible pit walls (semi-transparent)
-                const wallMat = new THREE.MeshStandardMaterial({
-                    color: 0x224466, transparent: true, opacity: 0.25, side: THREE.DoubleSide
-                });
-                const pitVisuals = [
-                    { size: [(pitHalfW + wallT) * 2, wallH * 2, wallT * 2], pos: [0, wallH, -(pitHalfD + wallT)] },
-                    { size: [(pitHalfW + wallT) * 2, wallH * 2, wallT * 2], pos: [0, wallH,   pitHalfD + wallT] },
-                    { size: [wallT * 2, wallH * 2, (pitHalfD + wallT) * 2], pos: [-(pitHalfW + wallT), wallH, 0] },
-                    { size: [wallT * 2, wallH * 2, (pitHalfD + wallT) * 2], pos: [  pitHalfW + wallT,  wallH, 0] },
-                ];
-                pitVisuals.forEach(({ size, pos }) => {
-                    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), wallMat);
-                    mesh.position.set(...pos);
-                    this.add(mesh);
-                });
-
-                // Create Balls — packed inside the pit at staggered heights
-                const ballGeo = new THREE.SphereGeometry(0.08, 16, 16);
-                for (let i = 0; i < this.numBalls; i++) {
-                    const color = new THREE.Color().setHSL(i / this.numBalls, 0.85, 0.6);
-                    const mat = new THREE.MeshStandardMaterial({
-                        color: color,
-                        roughness: 0.3,
-                        metalness: 0.1
-                    });
-                    const mesh = new THREE.Mesh(ballGeo, mat);
-
-                    // Pack inside the pit (within walls), staggered height so they settle naturally
-                    const x = (Math.random() - 0.5) * (pitHalfW * 2 - 0.2);
-                    const z = (Math.random() - 0.5) * (pitHalfD * 2 - 0.2);
-                    const y = 0.1 + Math.floor(i / 10) * 0.2; // stack in layers
-
-                    mesh.position.set(x, y, z);
-                    this.add(mesh);
-                    this.balls.push(mesh);
-
-                    // Physics Body
-                    const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
-                        .setTranslation(x, y, z)
-                        .setLinearDamping(0.0)  // no damping — gravity acts freely
-                        .setCanSleep(false);
-                    const body = this.physicsWorld.createRigidBody(bodyDesc);
-                    const colliderDesc = RAPIER.ColliderDesc.ball(0.08)
-                        .setRestitution(0.4)
-                        .setFriction(0.5);
-                    this.physicsWorld.createCollider(colliderDesc, body);
-
-                    this.bodies.push(body);
-                }
-
-                this.createControlUI();
-            }
-
-            createControlUI() {
-                // Use a SpatialPanel which is native to XR Blocks
-                this.panel = new xb.SpatialPanel({
-                    width: 1.0,
-                    height: 0.6,
-                    backgroundColor: '#000000cc',
-                    useDefaultPosition: false
-                });
-
-                this.panel.position.set(0, 1.5, -1.0);
-                this.add(this.panel);
-
-                const grid = this.panel.addGrid();
-                grid.addRow({ weight: 0.3 }).addText({
-                    text: 'VOICE JUMPER',
-                    fontSize: 0.08,
-                    fontColor: '#00e5ff'
-                });
-
-                this.statusText = grid.addRow({ weight: 0.2 }).addText({
-                    text: 'Enable Mic to begin',
-                    fontSize: 0.04,
-                    fontColor: '#ffffff'
-                });
-
-                const btnRow = grid.addRow({ weight: 0.5 });
-                this.micBtn = btnRow.addCol({ weight: 0.8 }).addTextButton({
-                    text: '🎤 START MIC',
-                    backgroundColor: '#0077ff',
-                    fontColor: '#ffffff',
-                    fontSize: 0.15
-                });
-
-                this.micBtn.onTriggered = () => this.initAudio();
-            }
-
-            async initAudio() {
-                if (this.isListening) return;
-
-                try {
-                    // Specific audio constraints often preferred by Meta/Android XR
-                    const constraints = {
-                        audio: {
-                            echoCancellation: false,
-                            noiseSuppression: false,
-                            autoGainControl: false
-                        }
-                    };
-
-                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-
-                    // Resume AudioContext on user gesture (required by most browsers/XR shells)
-                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    if (this.audioContext.state === 'suspended') {
-                        await this.audioContext.resume();
-                    }
-
-                    const source = this.audioContext.createMediaStreamSource(stream);
-                    this.analyser = this.audioContext.createAnalyser();
-                    this.analyser.fftSize = 512;
-                    source.connect(this.analyser);
-
-                    this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-                    this.isListening = true;
-
-                    this.micBtn.setText('LISTENING');
-                    this.micBtn.setDisabled(true);
-                    this.statusText.setText('SPEAK TO LIFT');
-                } catch (err) {
-                    console.error('Microphone access denied:', err);
-                    this.statusText.setText('Error: Mic Access Denied');
-                }
-            }
-
-            getVolume() {
-                if (!this.isListening || !this.analyser) return 0;
-                this.analyser.getByteTimeDomainData(this.dataArray);
-
-                let sumSquares = 0.0;
-                for (let i = 0; i < this.dataArray.length; i++) {
-                    const normalized = (this.dataArray[i] / 128.0) - 1.0;
-                    sumSquares += normalized * normalized;
-                }
-                return Math.sqrt(sumSquares / this.dataArray.length);
-            }
-
-            update() {
-                // Step Physics world
-                if (this.physicsWorld) {
-                    this.physicsWorld.step();
-
-                    // Synchronize Three.js visual positions with Physics simulation
-                    for (let i = 0; i < this.balls.length; i++) {
-                        const mesh = this.balls[i];
-                        const body = this.bodies[i];
-                        const t = body.translation();
-                        const r = body.rotation();
-                        mesh.position.set(t.x, t.y, t.z);
-                        mesh.quaternion.set(r.x, r.y, r.z, r.w);
-
-                    }
-                }
-
-                // Audio reactive logic
-                if (this.isListening) {
-                    const vol = this.getVolume();
-
-                    // Periodically update UI status
-                    if (this.frameId % 15 === 0) {
-                        const peak = (vol * 100).toFixed(0);
-                        this.statusText.setText(`Input: ${peak}%`);
-                    }
-
-                    if (vol > this.shoutThreshold) {
-                        // Simple linear scale — no divisor that would amplify loud input
-                        const lift = vol * this.liftForce;
-
-                        this.bodies.forEach(body => {
-                            // Only push if rising slower than 0.4 m/s — prevents rocket behaviour
-                            if (body.linvel().y < 0.4) {
-                                body.addForce({ x: 0, y: lift, z: 0 }, true);
-                            }
-                        });
-
-                        // Glow effect on the panel
-                        this.panel.backgroundColor = '#00e5ff66';
-                    } else {
-                        this.panel.backgroundColor = '#000000cc';
-                    }
-                }
-            }
+      class VoiceJumpApp extends xb.Script {
+        constructor() {
+          super();
+          this.balls = [];
+          this.bodies = [];
+          this.audioContext = null;
+          this.analyser = null;
+          this.dataArray = null;
+          this.isListening = false;
+          this.physicsWorld = null;
+          
+          // Settings
+          this.numBalls = 40;
+          this.shoutThreshold = 0.15; 
+          this.jumpForce = 0.5; // Impulse strength
         }
 
-        document.addEventListener('DOMContentLoaded', () => {
-            const options = new xb.Options();
-            options.enableUI();
-            options.enableHands(); // Enable hand tracking for Meta Quest/Galaxy XR
-            options.enableReticles();
+        async init() {
+          // Setup Lights
+          this.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
+          const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+          dirLight.position.set(5, 10, 5);
+          this.add(dirLight);
 
-            // Pass specific configurations for high-end XR
-            options.setAppTitle('Voice Jump XR');
+          // Setup Physics World
+          await RAPIER.init();
+          // Gravity is -9.81 on Y axis
+          this.physicsWorld = new RAPIER.World({ x: 0.0, y: -9.81, z: 0.0 });
 
-            xb.add(new VoiceJumpApp());
-            xb.init(options);
-        });
+          // Create Floor (Physics only)
+          const floorDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.05, 0);
+          const floorBody = this.physicsWorld.createRigidBody(floorDesc);
+          const floorColliderDesc = RAPIER.ColliderDesc.cuboid(10, 0.05, 10);
+          this.physicsWorld.createCollider(floorColliderDesc, floorBody);
+
+          // Create Balls sitting on the ground
+          const ballRadius = 0.08;
+          const ballGeo = new THREE.SphereGeometry(ballRadius, 16, 16);
+          for (let i = 0; i < this.numBalls; i++) {
+            const color = new THREE.Color().setHSL(Math.random(), 0.8, 0.6);
+            const mat = new THREE.MeshStandardMaterial({ 
+              color: color, 
+              roughness: 0.4,
+              metalness: 0.1
+            });
+            const mesh = new THREE.Mesh(ballGeo, mat);
+            
+            // Random start position
+            const angle = Math.random() * Math.PI * 2;
+            const dist = 1.0 + Math.random() * 2.0;
+            const x = Math.cos(angle) * dist;
+            const y = ballRadius + 0.05;
+            const z = Math.sin(angle) * dist;
+            
+            mesh.position.set(x, y, z);
+            this.add(mesh);
+            this.balls.push(mesh);
+
+            // Physics Body
+            const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+              .setTranslation(x, y, z)
+              .setCanSleep(false) // Keep active to respond to voice
+              .setLinearDamping(0.2) // Slight damping to avoid jitter
+              .setAngularDamping(0.2);
+              
+            const body = this.physicsWorld.createRigidBody(bodyDesc);
+            const colliderDesc = RAPIER.ColliderDesc.ball(ballRadius).setRestitution(0.4).setFriction(0.5);
+            this.physicsWorld.createCollider(colliderDesc, body);
+            
+            this.bodies.push(body);
+          }
+
+          this.createControlUI();
+        }
+
+        createControlUI() {
+          this.panel = new xb.SpatialPanel({
+            width: 1.0,
+            height: 0.6,
+            backgroundColor: '#000000cc'
+          });
+          
+          this.panel.position.set(0, 1.4, -1.2);
+          this.add(this.panel);
+
+          const grid = this.panel.addGrid();
+          grid.addRow({ weight: 0.3 }).addText({
+            text: 'VOICE JUMPER',
+            fontSize: 0.08,
+            fontColor: '#00e5ff'
+          });
+
+          this.statusText = grid.addRow({ weight: 0.2 }).addText({
+            text: 'Ready to listen...',
+            fontSize: 0.04,
+            fontColor: '#ffffff'
+          });
+
+          const btnRow = grid.addRow({ weight: 0.5 });
+          this.micBtn = btnRow.addCol({ weight: 0.8 }).addTextButton({
+            text: '🎤 START MIC',
+            backgroundColor: '#0077ff',
+            fontColor: '#ffffff',
+            fontSize: 0.15
+          });
+
+          this.micBtn.onTriggered = () => this.initAudio();
+        }
+
+        async initAudio() {
+          if (this.isListening) return;
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            if (this.audioContext.state === 'suspended') {
+              await this.audioContext.resume();
+            }
+            const source = this.audioContext.createMediaStreamSource(stream);
+            this.analyser = this.audioContext.createAnalyser();
+            this.analyser.fftSize = 512;
+            source.connect(this.analyser);
+            this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+            this.isListening = true;
+            
+            // FIX: Removed setDisabled as it is not a valid method for xb.TextButton
+            this.micBtn.setText('LISTENING');
+            this.statusText.setText('SHOUT TO JUMP!');
+          } catch (err) {
+            console.error('Mic error:', err);
+            this.statusText.setText('Error: Mic Permission');
+          }
+        }
+
+        getVolume() {
+          if (!this.isListening || !this.analyser) return 0;
+          this.analyser.getByteTimeDomainData(this.dataArray);
+          let sumSquares = 0.0;
+          for (let i = 0; i < this.dataArray.length; i++) {
+            const normalized = (this.dataArray[i] / 128.0) - 1.0;
+            sumSquares += normalized * normalized;
+          }
+          return Math.sqrt(sumSquares / this.dataArray.length);
+        }
+
+        update() {
+          if (this.physicsWorld) {
+            // Constant physics stepping ensures gravity works
+            this.physicsWorld.step();
+
+            for (let i = 0; i < this.balls.length; i++) {
+              const mesh = this.balls[i];
+              const body = this.bodies[i];
+              const t = body.translation();
+              const r = body.rotation();
+              mesh.position.set(t.x, t.y, t.z);
+              mesh.quaternion.set(r.x, r.y, r.z, r.w);
+
+              // Reset balls if they fall off the world edges
+              if (t.y < -2 || Math.abs(t.x) > 5 || Math.abs(t.z) > 5) {
+                body.setTranslation({ x: (Math.random() - 0.5) * 4, y: 1, z: (Math.random() - 0.5) * 4 }, true);
+                body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+              }
+            }
+          }
+
+          if (this.isListening) {
+            const vol = this.getVolume();
+            if (this.frameId % 15 === 0) {
+              const peak = (vol * 100).toFixed(0);
+              this.statusText.setText(`Voice Level: ${peak}%`);
+            }
+
+            if (vol > this.shoutThreshold) {
+              // Apply upward impulse only while shouting
+              const force = (vol - this.shoutThreshold) * this.jumpForce;
+              this.bodies.forEach(body => {
+                // Wake up body and apply impulse
+                body.wakeUp();
+                body.applyImpulse({ 
+                  x: (Math.random() - 0.5) * 0.01, 
+                  y: force * (0.5 + Math.random()), 
+                  z: (Math.random() - 0.5) * 0.01 
+                }, true);
+              });
+              this.panel.backgroundColor = '#00e5ff66';
+            } else {
+              this.panel.backgroundColor = '#000000cc';
+            }
+          }
+        }
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        const options = new xb.Options();
+        options.enableUI();
+        options.enableHands();
+        options.enableReticles();
+        options.setAppTitle('Voice Jump XR');
+        xb.add(new VoiceJumpApp());
+        xb.init(options);
+      });
     </script>
-</body>
-
+  </body>
 </html>
