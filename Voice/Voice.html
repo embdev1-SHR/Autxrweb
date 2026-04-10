@@ -47,7 +47,7 @@
                 // Settings
                 this.numBalls = 50;
                 this.shoutThreshold = 0.02; // Detect normal speech, not just shouts
-                this.liftForce = 0.8;       // Continuous upward force per frame
+                this.liftForce = 0.04;      // Very small continuous upward force per frame
             }
 
             async init() {
@@ -127,6 +127,7 @@
                     // Physics Body
                     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
                         .setTranslation(x, y, z)
+                        .setLinearDamping(3.0)  // bleeds velocity — prevents runaway speed
                         .setCanSleep(false);
                     const body = this.physicsWorld.createRigidBody(bodyDesc);
                     const colliderDesc = RAPIER.ColliderDesc.ball(0.08)
@@ -254,13 +255,14 @@
                     }
 
                     if (vol > this.shoutThreshold) {
-                        // Scale lift force continuously with voice volume
-                        // Louder voice = stronger upward force each frame
-                        const lift = (vol / this.shoutThreshold) * this.liftForce;
+                        // Simple linear scale — no divisor that would amplify loud input
+                        const lift = vol * this.liftForce;
 
                         this.bodies.forEach(body => {
-                            // Continuous upward force — gravity pulls back when silent
-                            body.addForce({ x: 0, y: lift, z: 0 }, true);
+                            // Only push if rising slower than 0.4 m/s — prevents rocket behaviour
+                            if (body.linvel().y < 0.4) {
+                                body.addForce({ x: 0, y: lift, z: 0 }, true);
+                            }
                         });
 
                         // Glow effect on the panel
