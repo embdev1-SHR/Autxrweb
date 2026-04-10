@@ -46,8 +46,8 @@
 
                 // Settings
                 this.numBalls = 50;
-                this.shoutThreshold = 0.12; // Slightly more sensitive for XR mics
-                this.jumpForce = 18.0;
+                this.shoutThreshold = 0.02; // Detect normal speech, not just shouts
+                this.liftForce = 0.8;       // Continuous upward force per frame
             }
 
             async init() {
@@ -61,29 +61,64 @@
                 await RAPIER.init();
                 this.physicsWorld = new RAPIER.World({ x: 0.0, y: -9.81, z: 0.0 });
 
-                // Create Floor (Physics only)
+                // Pit dimensions
+                const pitHalfW = 1.2; // half-width (x)
+                const pitHalfD = 1.2; // half-depth (z)
+                const wallH    = 0.6; // wall half-height
+                const wallT    = 0.05; // wall half-thickness
+
+                // Floor
                 const floorDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0);
                 const floorBody = this.physicsWorld.createRigidBody(floorDesc);
-                const floorColliderDesc = RAPIER.ColliderDesc.cuboid(20, 0.05, 20);
-                this.physicsWorld.createCollider(floorColliderDesc, floorBody);
+                this.physicsWorld.createCollider(
+                    RAPIER.ColliderDesc.cuboid(pitHalfW + wallT, 0.05, pitHalfD + wallT), floorBody
+                );
 
-                // Create Balls with physics
+                // Four walls (fixed bodies, invisible — just physics containment)
+                const wallDefs = [
+                    { pos: [0,              wallH, -(pitHalfD + wallT)], half: [pitHalfW + wallT, wallH, wallT] },
+                    { pos: [0,              wallH,   pitHalfD + wallT],  half: [pitHalfW + wallT, wallH, wallT] },
+                    { pos: [-(pitHalfW + wallT), wallH, 0],              half: [wallT, wallH, pitHalfD + wallT] },
+                    { pos: [  pitHalfW + wallT,  wallH, 0],              half: [wallT, wallH, pitHalfD + wallT] },
+                ];
+                wallDefs.forEach(({ pos, half }) => {
+                    const wb = this.physicsWorld.createRigidBody(
+                        RAPIER.RigidBodyDesc.fixed().setTranslation(...pos)
+                    );
+                    this.physicsWorld.createCollider(RAPIER.ColliderDesc.cuboid(...half), wb);
+                });
+
+                // Visible pit walls (semi-transparent)
+                const wallMat = new THREE.MeshStandardMaterial({
+                    color: 0x224466, transparent: true, opacity: 0.25, side: THREE.DoubleSide
+                });
+                const pitVisuals = [
+                    { size: [(pitHalfW + wallT) * 2, wallH * 2, wallT * 2], pos: [0, wallH, -(pitHalfD + wallT)] },
+                    { size: [(pitHalfW + wallT) * 2, wallH * 2, wallT * 2], pos: [0, wallH,   pitHalfD + wallT] },
+                    { size: [wallT * 2, wallH * 2, (pitHalfD + wallT) * 2], pos: [-(pitHalfW + wallT), wallH, 0] },
+                    { size: [wallT * 2, wallH * 2, (pitHalfD + wallT) * 2], pos: [  pitHalfW + wallT,  wallH, 0] },
+                ];
+                pitVisuals.forEach(({ size, pos }) => {
+                    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), wallMat);
+                    mesh.position.set(...pos);
+                    this.add(mesh);
+                });
+
+                // Create Balls — packed inside the pit at staggered heights
                 const ballGeo = new THREE.SphereGeometry(0.08, 16, 16);
                 for (let i = 0; i < this.numBalls; i++) {
-                    const color = new THREE.Color().setHSL(Math.random(), 0.8, 0.6);
+                    const color = new THREE.Color().setHSL(i / this.numBalls, 0.85, 0.6);
                     const mat = new THREE.MeshStandardMaterial({
                         color: color,
-                        roughness: 0.2,
+                        roughness: 0.3,
                         metalness: 0.1
                     });
                     const mesh = new THREE.Mesh(ballGeo, mat);
 
-                    // Random start position around the user
-                    const angle = Math.random() * Math.PI * 2;
-                    const dist = 1.5 + Math.random() * 2;
-                    const x = Math.cos(angle) * dist;
-                    const y = 0.1;
-                    const z = Math.sin(angle) * dist;
+                    // Pack inside the pit (within walls), staggered height so they settle naturally
+                    const x = (Math.random() - 0.5) * (pitHalfW * 2 - 0.2);
+                    const z = (Math.random() - 0.5) * (pitHalfD * 2 - 0.2);
+                    const y = 0.1 + Math.floor(i / 10) * 0.2; // stack in layers
 
                     mesh.position.set(x, y, z);
                     this.add(mesh);
@@ -94,7 +129,9 @@
                         .setTranslation(x, y, z)
                         .setCanSleep(false);
                     const body = this.physicsWorld.createRigidBody(bodyDesc);
-                    const colliderDesc = RAPIER.ColliderDesc.ball(0.08).setRestitution(0.8);
+                    const colliderDesc = RAPIER.ColliderDesc.ball(0.08)
+                        .setRestitution(0.4)
+                        .setFriction(0.5);
                     this.physicsWorld.createCollider(colliderDesc, body);
 
                     this.bodies.push(body);
@@ -170,7 +207,7 @@
 
                     this.micBtn.setText('LISTENING');
                     this.micBtn.setDisabled(true);
-                    this.statusText.setText('SHOUT NOW!');
+                    this.statusText.setText('SPEAK TO LIFT');
                 } catch (err) {
                     console.error('Microphone access denied:', err);
                     this.statusText.setText('Error: Mic Access Denied');
@@ -203,15 +240,6 @@
                         mesh.position.set(t.x, t.y, t.z);
                         mesh.quaternion.set(r.x, r.y, r.z, r.w);
 
-                        // Bounds check: Bring balls back if they wander too far
-                        if (t.y < -2 || Math.abs(t.x) > 10 || Math.abs(t.z) > 10) {
-                            body.setTranslation({
-                                x: (Math.random() - 0.5) * 4,
-                                y: 2,
-                                z: (Math.random() - 0.5) * 4
-                            }, true);
-                            body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-                        }
                     }
                 }
 
@@ -226,19 +254,13 @@
                     }
 
                     if (vol > this.shoutThreshold) {
-                        // Apply physical impulses based on shout intensity
-                        const intensity = (vol / 0.5) * this.jumpForce;
+                        // Scale lift force continuously with voice volume
+                        // Louder voice = stronger upward force each frame
+                        const lift = (vol / this.shoutThreshold) * this.liftForce;
 
                         this.bodies.forEach(body => {
-                            const vel = body.linvel();
-                            // Only jump if balls are relatively settled or near floor
-                            if (vel.y < 3) {
-                                body.applyImpulse({
-                                    x: (Math.random() - 0.5) * 5,
-                                    y: intensity * (0.5 + Math.random()),
-                                    z: (Math.random() - 0.5) * 5
-                                }, true);
-                            }
+                            // Continuous upward force — gravity pulls back when silent
+                            body.addForce({ x: 0, y: lift, z: 0 }, true);
                         });
 
                         // Glow effect on the panel
