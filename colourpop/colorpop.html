@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>VIBGYOR Voice Balloons | XR Blocks</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <link type="text/css" rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
+    <script>window.litDisableBundleWarning = true;</script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+          "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
+          "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
+          "troika-worker-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-worker-utils/src/index.js",
+          "bidi-js": "https://esm.sh/bidi-js@%5E1.0.2?target=es2022",
+          "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
+          "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
+          "lit/": "https://esm.run/lit@3/",
+          "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.11.0/build/xrblocks.js",
+          "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.11.0/build/addons/",
+          "@google/genai": "https://cdn.jsdelivr.net/npm/@google/genai/+esm"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <script type="module">
+      import 'xrblocks/addons/simulator/SimulatorAddons.js';
+      import * as THREE from 'three';
+      import * as xb from 'xrblocks';
+
+      const VIBGYOR = [
+        { name: 'Violet', hex: 0x8B00FF, css: '#8B00FF' },
+        { name: 'Indigo', hex: 0x4B0082, css: '#9370DB' },
+        { name: 'Blue',   hex: 0x1E90FF, css: '#1E90FF' },
+        { name: 'Green',  hex: 0x00C800, css: '#00C800' },
+        { name: 'Yellow', hex: 0xFFE000, css: '#FFE000' },
+        { name: 'Orange', hex: 0xFF8C00, css: '#FF8C00' },
+        { name: 'Red',    hex: 0xFF2020, css: '#FF2020' },
+      ];
+
+      const SPAWN_COUNT = 5;
+
+      class VibgyorGame extends xb.Script {
+        constructor() {
+          super();
+          this.balloons = [];
+          this.isListeningActive = false;
+        }
+
+        async init() {
+          this.ai = xb.core.ai;
+
+          this.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
+          const dir = new THREE.DirectionalLight(0xffffff, 2);
+          dir.position.set(1, 5, 2);
+          this.add(dir);
+
+          this.createUI();
+        }
+
+        createUI() {
+          this.panel = new xb.SpatialPanel({
+            width: 1.8,
+            height: 1.4,
+            backgroundColor: '#111111dd',
+          });
+          this.panel.position.set(0, 1.5, -1.8);
+          this.add(this.panel);
+
+          const grid = this.panel.addGrid();
+
+          // Title
+          grid.addRow({ weight: 0.12 }).addText({
+            text: 'VIBGYOR BALLOON SPAWNER',
+            fontSize: 0.1,
+            fontColor: '#ffffff',
+            textAlign: 'center',
+          });
+
+          // Color palette row — letter buttons in each VIBGYOR color
+          const paletteRow = grid.addRow({ weight: 0.22 });
+          VIBGYOR.forEach(c => {
+            const col = paletteRow.addCol({ weight: 1 / VIBGYOR.length });
+            col.addTextButton({
+              text: c.name[0],
+              fontColor: c.css,
+              fontSize: 0.75,
+              backgroundColor: '#2a2a2a',
+              width: 0.9,
+            }).onTriggered = () => this.spawnBalloonsOfColor(c);
+          });
+
+          // Color name labels row
+          const labelRow = grid.addRow({ weight: 0.12 });
+          VIBGYOR.forEach(c => {
+            labelRow.addCol({ weight: 1 / VIBGYOR.length }).addText({
+              text: c.name,
+              fontSize: 0.14,
+              fontColor: c.css,
+              textAlign: 'center',
+            });
+          });
+
+          // Status
+          this.statusText = grid.addRow({ weight: 0.18 }).addText({
+            text: 'Say a VIBGYOR color to spawn balloons!',
+            fontSize: 0.09,
+            fontColor: '#cccccc',
+            textAlign: 'center',
+          });
+
+          // Last spawned
+          this.lastText = grid.addRow({ weight: 0.12 }).addText({
+            text: '',
+            fontSize: 0.1,
+            fontColor: '#ffff88',
+            textAlign: 'center',
+          });
+
+          // Voice button
+          this.voiceBtn = grid.addRow({ weight: 0.24 }).addTextButton({
+            text: '🎤  ENABLE VOICE',
+            backgroundColor: '#006644',
+            fontColor: '#ffffff',
+            fontSize: 0.32,
+          });
+          this.voiceBtn.onTriggered = () => this.toggleVoice();
+        }
+
+        async toggleVoice() {
+          if (!this.isListeningActive) {
+            this.isListeningActive = true;
+            this.voiceBtn.setText('⏹  STOP VOICE');
+            this.voiceBtn.backgroundColor = '#cc3333';
+            this.statusText.setText('Starting microphone...');
+            try {
+              await xb.core.sound.enableAudio();
+              this.statusText.setText('Listening — say a color!');
+              this.processVoiceLoop();
+            } catch {
+              this.statusText.setText('Mic access denied.');
+              this.isListeningActive = false;
+              this.voiceBtn.setText('🎤  ENABLE VOICE');
+              this.voiceBtn.backgroundColor = '#006644';
+            }
+          } else {
+            this.isListeningActive = false;
+            this.voiceBtn.setText('🎤  ENABLE VOICE');
+            this.voiceBtn.backgroundColor = '#006644';
+            this.statusText.setText('Say a VIBGYOR color to spawn balloons!');
+            this.lastText.setText('');
+          }
+        }
+
+        async processVoiceLoop() {
+          if (!this.isListeningActive) return;
+
+          try {
+            await xb.core.sound.startRecording();
+            await new Promise(r => setTimeout(r, 2500));
+            const buffer = xb.core.sound.stopRecording();
+
+            if (buffer && this.isListeningActive) {
+              const audio64 = this._toBase64(buffer);
+              const names = VIBGYOR.map(c => c.name).join(', ');
+
+              const res = await this.ai.query({
+                type: 'multiPart',
+                parts: [
+                  { inlineData: { data: audio64, mimeType: 'audio/l16;rate=16000' } },
+                  { text: `Listen to the audio. Did the speaker say one of these colors: ${names}? Reply ONLY with JSON: {"color": "<matched color name>"} or {"color": null}.` }
+                ],
+                generationConfig: { responseMimeType: 'application/json' }
+              });
+
+              if (res?.text) {
+                const { color } = JSON.parse(res.text);
+                if (color) {
+                  const match = VIBGYOR.find(
+                    c => c.name.toLowerCase() === color.toLowerCase()
+                  );
+                  if (match) {
+                    this.spawnBalloonsOfColor(match);
+                    this.statusText.setText(`Spawning ${match.name}!`);
+                    this.lastText.setText(`Last: ${match.name}`);
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            console.error('Voice error:', err);
+          }
+
+          if (this.isListeningActive) this.processVoiceLoop();
+        }
+
+        // High-fidelity balloon matching BalloonPop.js model
+        createBalloonMesh(colorHex) {
+          const group = new THREE.Group();
+
+          const balloonGeo = new THREE.SphereGeometry(0.15, 32, 32);
+          const pos = balloonGeo.attributes.position;
+          const v = new THREE.Vector3();
+          for (let i = 0; i < pos.count; i++) {
+            v.fromBufferAttribute(pos, i);
+            if (v.y < 0) {
+              const t = 1.0 - Math.abs(v.y) * 0.35;
+              v.x *= t;
+              v.z *= t;
+            }
+            pos.setXYZ(i, v.x, v.y, v.z);
+          }
+          balloonGeo.computeVertexNormals();
+
+          const mat = new THREE.MeshStandardMaterial({
+            color: colorHex,
+            roughness: 0.2,
+            metalness: 0.1,
+            transparent: true,
+            opacity: 0.88,
+          });
+          group.add(new THREE.Mesh(balloonGeo, mat));
+
+          const knotGeo = new THREE.CylinderGeometry(0.012, 0.006, 0.05, 16);
+          knotGeo.translate(0, -0.165, 0);
+          group.add(new THREE.Mesh(knotGeo, mat.clone()));
+
+          const ringGeo = new THREE.TorusGeometry(0.014, 0.006, 8, 24);
+          ringGeo.rotateX(Math.PI / 2);
+          ringGeo.translate(0, -0.19, 0);
+          group.add(new THREE.Mesh(ringGeo, mat.clone()));
+
+          const stringGeo = new THREE.CylinderGeometry(0.002, 0.002, 0.45);
+          stringGeo.translate(0, -0.415, 0);
+          group.add(new THREE.Mesh(stringGeo, new THREE.MeshBasicMaterial({ color: 0xdddddd })));
+
+          return group;
+        }
+
+        spawnBalloonsOfColor(colorData) {
+          for (let i = 0; i < SPAWN_COUNT; i++) {
+            const mesh = this.createBalloonMesh(colorData.hex);
+            const angle = (i / SPAWN_COUNT) * Math.PI * 2 + Math.random() * 0.4;
+            const dist = 1.5 + Math.random() * 0.8;
+            mesh.position.set(
+              Math.sin(angle) * dist,
+              0.6 + Math.random() * 0.4,
+              -Math.cos(angle) * dist
+            );
+            mesh.userData = {
+              velocity: 0.005 + Math.random() * 0.004,
+              phase: Math.random() * Math.PI * 2,
+            };
+            this.add(mesh);
+            this.balloons.push(mesh);
+          }
+        }
+
+        _toBase64(buffer) {
+          let binary = '';
+          const bytes = new Uint8Array(buffer);
+          for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+          return window.btoa(binary);
+        }
+
+        update(time, delta) {
+          for (let i = this.balloons.length - 1; i >= 0; i--) {
+            const b = this.balloons[i];
+            b.position.y += b.userData.velocity;
+            b.position.x += Math.sin(xb.core.time * 1.8 + b.userData.phase) * 0.0025;
+            if (b.position.y > 4.5) {
+              this.remove(b);
+              this.balloons.splice(i, 1);
+            }
+          }
+        }
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        const options = new xb.Options();
+        options.enableUI();
+        options.enableAI();
+        options.enableReticles();
+        options.setAppTitle('VIBGYOR Voice Balloons');
+        xb.add(new VibgyorGame());
+        xb.init(options);
+      });
+    </script>
+  </body>
+</html>

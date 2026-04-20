@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import {palette} from 'xrblocks/addons/utils/Palette.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 
 import {BallShooter} from './BallShooter.js';
 
@@ -34,6 +35,9 @@ export class BallPit extends xb.Script {
 
   init() {
     xb.add(this);
+    new GLTFLoader().load('../cls.glb', (gltf) => {
+      this.add(gltf.scene);
+    });
   }
 
   update() {

@@ -29,6 +29,7 @@
       import * as THREE from 'three';
       import * as xb from 'xrblocks';
       import RAPIER from '@dimforge/rapier3d-simd-compat';
+      import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 
       class VoiceJumpApp extends xb.Script {
         constructor() {
@@ -48,6 +49,11 @@
         }
 
         async init() {
+          // Load environment
+          new GLTFLoader().load('../cls.glb', (gltf) => {
+            this.add(gltf.scene);
+          });
+
           // Setup Lights
           this.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
           const dirLight = new THREE.DirectionalLight(0xffffff, 2);

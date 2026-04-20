@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {playPopSound, playWhooshSound} from './audio.js';
 
 // --- CONSTANTS ---
@@ -115,6 +116,9 @@ export class BalloonGame extends xb.Script {
     dirLight.position.set(1, 2, 1);
     this.add(dirLight);
 
+    new GLTFLoader().load('../cls.glb', (gltf) => {
+      this.add(gltf.scene);
+    });
     this.createPrefabs();
     this.renderMenu();
   }
